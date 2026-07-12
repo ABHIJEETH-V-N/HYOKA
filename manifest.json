@@ -1,0 +1,10 @@
+{
+    "id": "hyoka",
+    "name": "HYOKA",
+    "version": "1.0.0",
+    "minAppVersion": "1.0.0",
+    "description": "Adds web bookmarks directly into a beautiful visual dashboard shelf using a clean popup form.",
+    "author": "ABHIJEETH V N",
+    "authorUrl": "https://hypervisuals.pages.dev",
+    "isDesktopOnly": false
+}
