@@ -1,0 +1,32 @@
+{
+  "profiles": [
+    {
+      "id": "systems-architect",
+      "name": "Systems Architect",
+      "apiUrl": "http://127.0.0.1:8080/v1",
+      "modelName": "google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0",
+      "apiKey": "",
+      "systemPrompt": "You are a systems engineering agent. Utilize tools to scan note architecture and persist logs.",
+      "temperature": 0.2
+    },
+    {
+      "id": "secops-analyst",
+      "name": "SecOps Analyst",
+      "apiUrl": "http://127.0.0.1:8080/v1",
+      "modelName": "google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0",
+      "apiKey": "",
+      "systemPrompt": "You are a cybersecurity automation agent specialized in log analysis and code scanning.",
+      "temperature": 0.1
+    },
+    {
+      "id": "persona-1783884158540",
+      "name": "Auxiliary Worker Drone",
+      "apiUrl": "http://127.0.0.1:8080/v1",
+      "modelName": "google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0",
+      "apiKey": "",
+      "systemPrompt": "You are an explicit micro-task computational node persona instance.",
+      "temperature": 0.3
+    }
+  ],
+  "activeProfileId": "systems-architect"
+}

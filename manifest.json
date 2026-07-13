@@ -1,10 +1,10 @@
 {
-    "id": "hyoka",
-    "name": "HYOKA",
-    "version": "1.0.0",
-    "minAppVersion": "1.0.0",
-    "description": "Adds web bookmarks directly into a beautiful visual dashboard shelf using a clean popup form.",
-    "author": "ABHIJEETH V N",
-    "authorUrl": "https://hypervisuals.pages.dev",
-    "isDesktopOnly": false
+  "id": "hyoka",
+  "name": "Hyoka",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Hyoka — an Agentic System for Obsidian. MCP-style tool loop, multi-profile agents best suited for local egents",
+  "author": "ABHIJEETH V N",
+  "authorUrl": "https://hypervisuals.pages.dev",
+  "isDesktopOnly": false
 }

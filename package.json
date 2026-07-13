@@ -1,18 +1,17 @@
 {
   "name": "hyoka",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Hyoka — Agentic Operating System for Obsidian",
+  "main": "main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "license": "MIT",
   "devDependencies": {
-    "obsidian": "^1.13.1",
-    "tsup": "^8.5.1",
-    "typescript": "^7.0.2"
+    "@types/node": "^20.11.0",
+    "esbuild": "0.19.11",
+    "obsidian": "latest",
+    "typescript": "5.3.3"
   }
 }
