@@ -1,7 +1,7 @@
 {
   "id": "hyoka",
   "name": "Hyoka",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.4.0",
   "description": "An AI-driven shell for local task automation and vault analysis.",
   "author": "ABHIJEETH V N",
