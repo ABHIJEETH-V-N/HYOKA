@@ -3,7 +3,7 @@
   "name": "Hyoka",
   "version": "1.0.0",
   "minAppVersion": "1.4.0",
-  "description": "An AI-driven shell for local task automation and vault analysis",
+  "description": "An AI-driven shell for local task automation and vault analysis.",
   "author": "ABHIJEETH V N",
   "authorUrl": "https://hypervisuals.pages.dev",
   "isDesktopOnly": false
