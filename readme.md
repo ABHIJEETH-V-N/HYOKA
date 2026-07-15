@@ -19,34 +19,32 @@
 ```
 
 
-# Hyoka
+# HYOKA
+> High-performance, local-first agentic shell for deep vault integration.
 
-Hyoka is a powerful, local-first agentic shell designed for deep vault integration and automation.
+## ⚡ Hyperized Task Stream
+Hyoka now supports **Hyperized Mode**. Toggle it in settings to enable your agent to inject interactive dashboard widgets directly into Markdown files. Turn static notes into live monitoring tools for your systems.
 
-## Features
-* **Multi-Persona Orchestration:** Configure different agents for different tasks.
-* **Direct Vault Access:** Use tools to search, read, create, and manage files without leaving your notes.
-* **Contextual Awareness:** Attach active notes to your agent's context for specific analysis.
-* **Secure Execution:** All destructive actions (like file deletion) require human-in-the-loop authorization.
+## Key Capabilities
+- **Direct System Access:** Execute local shell commands with human-in-the-loop authorization.
+- **Live UI Rendering:** The **UI Renderer** view now features a persistent dropdown to switch between any HTML file in your vault instantly.
+- **Context Management:** Set your own model `CTX_MAX` in the profile settings for total control over token usage.
+- **Minimalist Aesthetic:** Designed for focus with a monochrome, distraction-free interface.
 
 ## Installation
-
-### From Community Plugins
+### Via Community Plugins
 1. Open **Settings > Community plugins**.
-2. Click **Browse** and search for "Hyoka".
-3. Click **Install** and then **Enable**.
+2. Browse for "Hyoka" and click **Install**.
 
-### Manual Installation
-1. Go to the [Releases page](https://github.com/abhijeeth-v-n/HYOKA/releases).
-2. Download `main.js`, `manifest.json`, and `styles.css` from the latest release.
-3. Move these files into your vault: `YOUR_VAULT/.obsidian/plugins/hyoka/`.
-4. Refresh Obsidian and enable the plugin.
+### Manual Release
+1. Download the latest `main.js`, `manifest.json`, and `styles.css` from the [Releases](https://github.com/abhijeeth-v-n/HYOKA/releases).
+2. Extract into `YOUR_VAULT/.obsidian/plugins/hyoka/`.
+3. Enable in the Plugins settings.
 
-## Usage
-1. Click the **"Open Hyoka Shell"** icon in the ribbon.
-2. Select your agent persona from the header dropdown.
-3. Type your instructions in the terminal console.
-4. Use the **"Attach Active Note"** button to feed specific vault content into the agent's current working memory.
+## Configuration
+- **Profiles:** Manage multiple agent personas with custom System Prompts and API endpoints.
+- **Security:** Enable `SYS_EXEC BYPASS` only for trusted local environments.
+- **Performance:** Set `CTX_MAX` according to your local LLM's capability to avoid truncation.
 
-## Development & Security
-Hyoka is built as a local MCP (Model Context Protocol) executor. No data is sent to external cloud APIs without your explicit configuration of an API endpoint in the settings.
+---
+*Built for the Systems Engineer.*

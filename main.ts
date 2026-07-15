@@ -1,171 +1,36 @@
-import { 
-    ItemView, 
-    Plugin, 
-    PluginSettingTab, 
-    Setting, 
-    WorkspaceLeaf, 
-    MarkdownRenderer, 
+import {
+    App,
+    ItemView,
+    Plugin,
+    PluginSettingTab,
+    Setting,
+    WorkspaceLeaf,
+    MarkdownRenderer,
     Component,
     Notice,
     requestUrl,
     TFile,
+    Modal,
+    FuzzySuggestModal,
     setIcon
 } from 'obsidian';
 
-const VIEW_TYPE_HYOKA = "hyoka-chat-view";
+const VIEW_CHAT = "hyoka-chat-view";
+const VIEW_PREVIEW = "hyoka-preview-view";
+const VIEW_SLIDES = "hyoka-slides-view";
+const AGENT_MEMORY_ROOT = "agent-memory";
 
-// -------------------------------------------------------------
-// STANDALONE PORTABLE MCP CODEC SPECIFICATIONS
-// -------------------------------------------------------------
-interface McpToolDefinition {
-    name: string;
-    description: string;
-    inputSchema: {
-        type: string;
-        properties: Record<string, any>;
-        required: string[];
-    };
-}
+const WEBSITE_SYSTEM_PROMPT =
+    'You are a high-performance frontend generator. You write a single self-contained HTML5 file. Use Tailwind via the CDN script tag ' +
+    '(<script src="https://cdn.tailwindcss.com"></script>) and Tailwind utility classes for ALL styling. ' +
+    'Do not write a separate <style> block unless absolutely necessary. Inline any needed <script>. ' +
+    'Respond with ONLY the raw HTML, starting at <!DOCTYPE html> — no markdown code fences, no commentary, no opinions. ' +
+    'If you need a placeholder image, use an <img> pointing at https://picsum.photos/seed/<short-slug>/<width>/<height> ' +
+    'Make it visually polished, responsive, and clean.';
 
-class McpToolRegistry {
-    static getCapabilities(): McpToolDefinition[] {
-        return [
-            {
-                name: "write_agent_memory",
-                description: "Appends long-term contextual historical data logs directly to the profile memory workspace file system.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        profileId: { type: "string", description: "The active tracking ID string of the current operational persona instance." },
-                        logEntry: { type: "string", description: "The raw markdown string text payload block to append to disk storage archives." }
-                    },
-                    required: ["profileId", "logEntry"]
-                }
-            },
-            {
-                name: "create_note",
-                description: "Creates a new markdown note in the vault with the specified content.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        filename: { type: "string", description: "Name of the file including .md extension (e.g., 'Project_Plan.md')" },
-                        content: { type: "string", description: "The markdown content to write into the file." },
-                        folder: { type: "string", description: "Optional. The folder path to create it in. Use '' for root." }
-                    },
-                    required: ["filename", "content"]
-                }
-            },
-            {
-                name: "read_note",
-                description: "Reads the content of an existing note to learn from it or use it as context.",
-                inputSchema: {
-                    type: "object",
-                    properties: { path: { type: "string", description: "The exact path of the file (e.g., 'Notes/Idea.md')" } },
-                    required: ["path"]
-                }
-            },
-            {
-                name: "search_vault",
-                description: "Performs a raw text search across all markdown files in the vault to find references to a specific keyword or phrase.",
-                inputSchema: {
-                    type: "object",
-                    properties: { query: { type: "string", description: "The exact text phrase or keyword to search for." } },
-                    required: ["query"]
-                }
-            },
-            {
-                name: "browse_web_page",
-                description: "Fetches and reads the text content of a live URL using Obsidian's internal web engine.",
-                inputSchema: {
-                    type: "object",
-                    properties: { url: { type: "string", description: "The full http/https URL to browse." } },
-                    required: ["url"]
-                }
-            },
-            {
-                name: "request_file_deletion",
-                description: "Requests user permission to delete a file. YOU MUST CALL THIS to delete a file.",
-                inputSchema: {
-                    type: "object",
-                    properties: { 
-                        path: { type: "string", description: "Path of the file to delete." },
-                        reason: { type: "string", description: "Explanation for the user why this should be deleted." }
-                    },
-                    required: ["path", "reason"]
-                }
-            }
-        ];
-    }
-
-    static async executeTool(name: string, args: any, plugin: HyokaPlugin): Promise<string> {
-        try {
-            if (name === "write_agent_memory") {
-                const { profileId, logEntry } = args;
-                const targetPath = `agent-memory/${profileId}/chat_log.md`;
-                
-                if (await plugin.app.vault.adapter.exists(targetPath)) {
-                    const currentData = await plugin.app.vault.adapter.read(targetPath);
-                    const explicitTimestamp = new Date().toISOString();
-                    const processedPayload = `\n\n### Runtime Log Timestamp: ${explicitTimestamp}\n${logEntry}\n`;
-                    await plugin.app.vault.adapter.write(targetPath, currentData + processedPayload);
-                    return `Disk Write Operations Executed Successfully: Synced metadata parameters to file location target ${targetPath}`;
-                }
-                return "Target memory sector configuration path location error.";
-            }
-
-            if (name === "create_note") {
-                const folderPath = args.folder ? (args.folder.endsWith('/') ? args.folder : `${args.folder}/`) : '';
-                const fullPath = `${folderPath}${args.filename}`;
-                
-                if (await plugin.app.vault.adapter.exists(fullPath)) return `Error: File '${fullPath}' already exists.`;
-                await plugin.app.vault.create(fullPath, args.content);
-                return `Success. Created file at ${fullPath}.`;
-            }
-
-            if (name === "read_note") {
-                const file = plugin.app.vault.getAbstractFileByPath(args.path);
-                if (file instanceof TFile) {
-                    const content = await plugin.app.vault.read(file);
-                    return `[CONTENT OF ${args.path}]:\n${content}`;
-                }
-                return `Error: File not found at ${args.path}. Did you include the .md extension?`;
-            }
-
-            if (name === "search_vault") {
-                const files = plugin.app.vault.getMarkdownFiles();
-                let results = `Search results for "${args.query}":\n\n`;
-                let matchCount = 0;
-
-                for (const file of files) {
-                    const content = await plugin.app.vault.read(file);
-                    if (content.toLowerCase().includes(args.query.toLowerCase())) {
-                        matchCount++;
-                        // Extract a small snippet around the first match
-                        const index = content.toLowerCase().indexOf(args.query.toLowerCase());
-                        const snippet = content.substring(Math.max(0, index - 100), Math.min(content.length, index + 100));
-                        results += `--- Match found in ${file.path} ---\n...${snippet}...\n\n`;
-                    }
-                    if (matchCount >= 5) break; // Limit context window bloat
-                }
-                return matchCount > 0 ? results : `No matches found for "${args.query}".`;
-            }
-
-            if (name === "browse_web_page") {
-                const response = await requestUrl({ url: args.url, method: 'GET' });
-                const cleanText = response.text.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').substring(0, 12000); 
-                return `[WEB CONTENT FROM ${args.url}]:\n${cleanText}`;
-            }
-
-            throw new Error(`Execution error: Unregistered tool ${name}`);
-        } catch (e) {
-            return `Tool execution failed: ${e.message}`;
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// PLUGIN CORE ARCHITECTURE
-// -------------------------------------------------------------
+// ================================================================
+// SETTINGS
+// ================================================================
 interface AgentProfile {
     id: string;
     name: string;
@@ -174,34 +39,58 @@ interface AgentProfile {
     apiKey: string;
     systemPrompt: string;
     temperature: number;
+    maxContextTokens: number;
 }
 
-interface HyokaSettings { profiles: AgentProfile[]; activeProfileId: string; }
+interface HyokaSettings {
+    profiles: AgentProfile[];
+    activeProfileId: string;
+    scraperUrl: string;
+    scraperApiKey: string;
+    autoApproveCommands: boolean;
+    enableWebSearch: boolean;
+    enableImageLookup: boolean;
+    hyperizedMode: boolean;
+}
+
+function freshProfile(name = 'Agent'): AgentProfile {
+    return {
+        id: `profile-${Date.now()}`,
+        name,
+        apiUrl: 'http://127.0.0.1:8080/v1',
+        modelName: 'gemma-4',
+        apiKey: '',
+        systemPrompt: 'You are an autonomous engineering agent operating directly inside the user\'s Obsidian vault. Execute commands, write robust code, and do not provide conversational filler. Call tools to accomplish tasks.',
+        temperature: 0.1,
+        maxContextTokens: 128000
+    };
+}
 
 const DEFAULT_SETTINGS: HyokaSettings = {
     profiles: [
         {
-            id: 'systems-architect',
-            name: 'Systems Architect',
+            id: 'sys-core',
+            name: 'Core',
             apiUrl: 'http://127.0.0.1:8080/v1',
-            modelName: 'google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0',
+            modelName: 'gemma-4',
             apiKey: '',
-            systemPrompt: 'You are an advanced AI Agent operating DIRECTLY inside the user\'s Obsidian Vault file system. YOU HAVE FULL CONTROL. If the user asks you to create a file, DO NOT SAY YOU CANNOT. Use the `Notes` tool immediately. If they ask you to research, use the `browse_web_page` or `search_vault` tools. Never apologize for lacking access; you have the tools, use them.',
-            temperature: 0.2
-        },
-        {
-            id: 'secops-analyst',
-            name: 'SecOps Analyst',
-            apiUrl: 'http://127.0.0.1:8080/v1',
-            modelName: 'google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0',
-            apiKey: '',
-            systemPrompt: 'You are a cybersecurity automation agent specialized in log analysis and code scanning. Use your tools to analyze vault data.',
-            temperature: 0.1
+            systemPrompt: 'You are an autonomous systems engineering agent. You build robust code using your tools. Never describe what you would do — call the tool. Keep prose terse.',
+            temperature: 0.1,
+            maxContextTokens: 128000
         }
     ],
-    activeProfileId: 'systems-architect'
+    activeProfileId: 'sys-core',
+    scraperUrl: '',
+    scraperApiKey: '',
+    autoApproveCommands: false,
+    enableWebSearch: true,
+    enableImageLookup: true,
+    hyperizedMode: false
 };
 
+// ================================================================
+// TYPES
+// ================================================================
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string | null;
@@ -210,16 +99,248 @@ interface ChatMessage {
     tool_call_id?: string;
 }
 
+// ================================================================
+// TOOL REGISTRY
+// ================================================================
+class McpToolRegistry {
+    static getCapabilities(plugin: HyokaPlugin): any[] {
+        const tools: any[] = [
+            {
+                name: "create_note",
+                description: "Creates or overwrites a file in the vault (markdown, code, or text file) with the given content.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        path: { type: "string", description: "Full vault-relative path including extension." },
+                        content: { type: "string" }
+                    },
+                    required: ["path", "content"]
+                }
+            },
+            {
+                name: "edit_note",
+                description: "Performs a precise find-and-replace patch on an existing file.",
+                inputSchema: {
+                    type: "object",
+                    properties: { path: { type: "string" }, find: { type: "string" }, replace: { type: "string" } },
+                    required: ["path", "find", "replace"]
+                }
+            },
+            {
+                name: "read_note",
+                description: "Reads the content of an existing file in the vault.",
+                inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+            },
+            {
+                name: "list_files",
+                description: "Lists files under a given vault folder, recursively.",
+                inputSchema: { type: "object", properties: { folder: { type: "string" } }, required: ["folder"] }
+            },
+            {
+                name: "run_command",
+                description: "Executes a local shell command (e.g. 'cargo build', 'npm run dev'). Executes in the vault root unless cwd is provided.",
+                inputSchema: {
+                    type: "object",
+                    properties: { command: { type: "string" }, cwd: { type: "string", description: "Relative directory path (optional)" } },
+                    required: ["command"]
+                }
+            }
+        ];
+
+        if (plugin.settings.enableWebSearch) {
+            tools.push({
+                name: "search_web",
+                description: "Searches the internet. Fails gracefully if offline.",
+                inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+            });
+        }
+
+        if (plugin.settings.scraperUrl) {
+            tools.push({
+                name: "scrape_web",
+                description: "Uses the configured local web scraper to fetch JS-rendered URL content.",
+                inputSchema: {
+                    type: "object",
+                    properties: { url: { type: "string" }, selector: { type: "string" } },
+                    required: ["url"]
+                }
+            });
+        }
+
+        return tools;
+    }
+
+    static asOpenAiTools(plugin: HyokaPlugin) {
+        return this.getCapabilities(plugin).map(t => ({
+            type: "function",
+            function: { name: t.name, description: t.description, parameters: t.inputSchema }
+        }));
+    }
+
+    static async executeTool(name: string, args: any, plugin: HyokaPlugin): Promise<string> {
+        try {
+            const vault = plugin.app.vault;
+
+            if (name === "create_note") {
+                await ensureParentFolders(plugin, args.path);
+                if (await vault.adapter.exists(args.path)) {
+                    await vault.adapter.write(args.path, args.content);
+                    plugin.notifyLiveUpdate(args.path);
+                    return `Updated existing file: ${args.path}`;
+                }
+                await vault.create(args.path, args.content);
+                plugin.notifyLiveUpdate(args.path);
+                return `Created file: ${args.path}`;
+            }
+
+            if (name === "edit_note") {
+                if (!(await vault.adapter.exists(args.path))) return `Error: file not found at ${args.path}`;
+                const current = await vault.adapter.read(args.path);
+                if (!current.includes(args.find)) return `Error: 'find' text not found in ${args.path}.`;
+                await vault.adapter.write(args.path, current.replace(args.find, args.replace));
+                plugin.notifyLiveUpdate(args.path);
+                return `Patched ${args.path}`;
+            }
+
+            if (name === "read_note") {
+                if (!(await vault.adapter.exists(args.path))) return `Error: file not found at ${args.path}`;
+                return `[CONTENT OF ${args.path}]:\n${await vault.adapter.read(args.path)}`;
+            }
+
+            if (name === "list_files") {
+                const folder = args.folder || '';
+                const all = vault.getFiles().map(f => f.path).filter(p => p.startsWith(folder));
+                return all.length ? all.join('\n') : `No files under ${folder || '(root)'}`;
+            }
+
+            if (name === "run_command") return await plugin.commandRunner.request(args.command, args.cwd);
+
+            if (name === "search_web") {
+                try {
+                    const res = await requestUrl({ url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query)}`, method: 'GET' });
+                    const linkRe = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+                    const snippetRe = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+                    const strip = (s: string) => s.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+                    const titles: string[] = []; let m;
+                    while ((m = linkRe.exec(res.text)) !== null && titles.length < 5) titles.push(strip(m[2]));
+                    const snippets: string[] = [];
+                    while ((m = snippetRe.exec(res.text)) !== null && snippets.length < 5) snippets.push(strip(m[1]));
+                    if (titles.length === 0) return `No web results found.`;
+                    return titles.map((t, i) => `${i + 1}. ${t}\n   ${snippets[i] || ''}`).join('\n');
+                } catch (e: any) {
+                    return `Network error: Offline or unreachable. Proceed without web data.`;
+                }
+            }
+
+            if (name === "scrape_web") {
+                try {
+                    const res = await requestUrl({
+                        url: plugin.settings.scraperUrl, method: 'POST', contentType: 'application/json',
+                        headers: plugin.settings.scraperApiKey ? { 'Authorization': `Bearer ${plugin.settings.scraperApiKey}` } : undefined,
+                        body: JSON.stringify({ url: args.url, selector: args.selector || null })
+                    });
+                    return `[SCRAPED CONTENT FROM ${args.url}]:\n${res.text.substring(0, 15000)}`;
+                } catch (e: any) {
+                    return `Scraper offline or unreachable.`;
+                }
+            }
+
+            throw new Error(`Unregistered tool: ${name}`);
+        } catch (e: any) {
+            return `Tool execution failed: ${e.message}`;
+        }
+    }
+}
+
+async function ensureParentFolders(plugin: HyokaPlugin, path: string) {
+    const parts = path.split('/').slice(0, -1);
+    let acc = '';
+    for (const part of parts) {
+        acc = acc ? `${acc}/${part}` : part;
+        if (!(await plugin.app.vault.adapter.exists(acc))) await plugin.app.vault.createFolder(acc);
+    }
+}
+
+// ================================================================
+// COMMAND RUNNER
+// ================================================================
+class CommandRunner {
+    plugin: HyokaPlugin;
+    constructor(plugin: HyokaPlugin) { this.plugin = plugin; }
+
+    async request(command: string, cwd?: string): Promise<string> {
+        if (!this.plugin.settings.autoApproveCommands) {
+            const approved = await new Promise<boolean>((resolve) => new CommandConfirmModal(this.plugin.app, command, cwd || 'Vault Root', resolve).open());
+            if (!approved) return `User declined to run: ${command}`;
+        }
+        return this.execute(command, cwd);
+    }
+
+    private execute(command: string, relativeCwd?: string): Promise<string> {
+        return new Promise((resolve) => {
+            try {
+                // @ts-ignore Node execution context
+                const { exec } = require('child_process');
+                const adapter: any = this.plugin.app.vault.adapter;
+                const basePath = adapter.getBasePath ? adapter.getBasePath() : '';
+                
+                let targetCwd = basePath;
+                if (relativeCwd && basePath) targetCwd = `${basePath}/${relativeCwd}`;
+
+                exec(command, { cwd: targetCwd, timeout: 60000, maxBuffer: 5 * 1024 * 1024 }, (err: any, stdout: string, stderr: string) => {
+                    resolve(err
+                        ? `Error.\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr || err.message}`
+                        : `Success.\nSTDOUT:\n${stdout}${stderr ? `\nSTDERR:\n${stderr}` : ''}`);
+                });
+            } catch (e: any) {
+                resolve(`Execution environment unavailable: ${e.message}`);
+            }
+        });
+    }
+}
+
+class CommandConfirmModal extends Modal {
+    constructor(app: App, private command: string, private cwd: string, private cb: (v: boolean) => void) { super(app); }
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.createEl('h3', { text: 'SYS_EXEC', attr: { style: 'font-family: var(--font-monospace); color: var(--text-normal); font-weight: normal; margin-bottom: 4px;' } });
+        contentEl.createEl('div', { text: `cwd: ${this.cwd}`, attr: { style: 'font-size: 0.8em; font-family: var(--font-monospace); color: var(--text-muted); margin-bottom: 12px;' } });
+        contentEl.createEl('div', { text: this.command, attr: { style: 'background:var(--background-secondary); border: 1px solid var(--background-modifier-border); padding:10px; font-family: var(--font-monospace); font-size: 0.9em;' } });
+        const row = contentEl.createEl('div', { attr: { style: 'display:flex; gap:8px; justify-content:flex-end; margin-top:16px;' } });
+        
+        const denyBtn = row.createEl('button', { cls: 'hyoka-btn-flat' });
+        setIcon(denyBtn, 'x');
+        denyBtn.appendChild(document.createTextNode(' Deny'));
+        denyBtn.onclick = () => { this.cb(false); this.close(); };
+
+        const runBtn = row.createEl('button', { cls: 'hyoka-btn-flat' });
+        runBtn.style.color = 'var(--text-normal)';
+        runBtn.style.borderColor = 'var(--text-normal)';
+        setIcon(runBtn, 'play');
+        runBtn.appendChild(document.createTextNode(' Exec'));
+        runBtn.onclick = () => { this.cb(true); this.close(); };
+    }
+    onClose() { this.contentEl.empty(); }
+}
+
+// ================================================================
+// MAIN PLUGIN
+// ================================================================
 export default class HyokaPlugin extends Plugin {
-    settings: HyokaSettings;
+    settings!: HyokaSettings;
+    commandRunner!: CommandRunner;
 
     async onload() {
         await this.loadSettings();
-        await this.initializeAgentWorkspace();
-        this.injectCustomStyles();
+        this.commandRunner = new CommandRunner(this);
+        await this.initializeMemoryFolders();
+        this.injectStyles();
 
-        this.registerView(VIEW_TYPE_HYOKA, (leaf) => new HyokaChatView(leaf, this));
-        this.addRibbonIcon('bot', 'Open Hyoka Shell', () => this.activateView());
+        this.registerView(VIEW_CHAT, (leaf) => new HyokaChatView(leaf, this));
+        this.registerView(VIEW_PREVIEW, (leaf) => new HyokaPreviewView(leaf, this));
+        this.registerView(VIEW_SLIDES, (leaf) => new HyokaSlideView(leaf, this));
+
+        this.addRibbonIcon('terminal-square', 'SYS_CTRL', () => this.activateChatView());
         this.addSettingTab(new HyokaSettingTab(this.app, this));
     }
 
@@ -227,151 +348,365 @@ export default class HyokaPlugin extends Plugin {
     async saveSettings() { await this.saveData(this.settings); }
     getActiveProfile(): AgentProfile { return this.settings.profiles.find(p => p.id === this.settings.activeProfileId) || this.settings.profiles[0]; }
 
-    async initializeAgentWorkspace() {
-        const baseDir = "agent-memory";
-        if (!(await this.app.vault.adapter.exists(baseDir))) await this.app.vault.createFolder(baseDir);
-
+    async initializeMemoryFolders() {
+        if (!(await this.app.vault.adapter.exists(AGENT_MEMORY_ROOT))) await this.app.vault.createFolder(AGENT_MEMORY_ROOT);
         for (const profile of this.settings.profiles) {
-            const profileDir = `${baseDir}/${profile.id}`;
-            if (!(await this.app.vault.adapter.exists(profileDir))) await this.app.vault.createFolder(profileDir);
-            
-            const structuralLogPath = `${profileDir}/session_history.json`;
-            if (!(await this.app.vault.adapter.exists(structuralLogPath))) await this.app.vault.create(structuralLogPath, JSON.stringify([]));
-            
-            const humanLogPath = `${profileDir}/chat_log.md`;
-            if (!(await this.app.vault.adapter.exists(humanLogPath))) await this.app.vault.create(humanLogPath, `# ${profile.name} Session Runtime Log\n\n`);
+            const dir = `${AGENT_MEMORY_ROOT}/${profile.id}`;
+            if (!(await this.app.vault.adapter.exists(dir))) await this.app.vault.createFolder(dir);
+            const hist = `${dir}/session_history.json`;
+            if (!(await this.app.vault.adapter.exists(hist))) await this.app.vault.create(hist, JSON.stringify([]));
         }
     }
 
-    injectCustomStyles() {
-        const styleId = 'hyoka-core-ux-overrides';
-        if (!document.getElementById(styleId)) {
-            const styleEl = document.createElement('style');
-            styleEl.id = styleId;
-            styleEl.textContent = `
-                .nav-folder[data-path="agent-memory"] > .nav-folder-title { color: var(--text-accent) !important; font-family: var(--font-monospace) !important; font-weight: 700 !important; }
-                .nav-folder[data-path="agent-memory"] > .nav-folder-title .nav-folder-title-content::before { content: "⚡ [CORE] " !important; }
-                .hyoka-setting-card { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
-                .hyoka-setting-card h4 { margin-top: 0 !important; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 8px; color: var(--text-accent); }
-                .hyoka-toolbar-btn { background: none; border: 1px solid var(--background-modifier-border); color: var(--text-muted); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em; display: flex; align-items: center; gap: 4px; transition: all 0.2s; }
-                .hyoka-toolbar-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
-                .hyoka-toolbar-btn.danger:hover { background: rgba(255,0,0,0.1); color: var(--text-error); border-color: var(--text-error); }
-            `;
-            document.head.appendChild(styleEl);
-        }
+    injectStyles() {
+        const id = 'hyoka-minimal-ux';
+        if (document.getElementById(id)) return;
+        const el = document.createElement('style');
+        el.id = id;
+        el.textContent = `
+            /* Monolithic Minimal Aesthetics */
+            .hyoka-card { background: transparent; border: 1px solid var(--background-modifier-border); border-radius: 2px; padding: 16px; margin-bottom: 16px; font-family: var(--font-monospace); }
+            
+            .hyoka-btn-icon { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.15s ease; }
+            .hyoka-btn-icon:hover { color: var(--text-normal); }
+            
+            .hyoka-btn-flat { background: transparent; border: 1px solid var(--background-modifier-border); color: var(--text-muted); padding: 4px 10px; border-radius: 2px; cursor: pointer; font-size: 0.8em; font-family: var(--font-monospace); display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s ease; }
+            .hyoka-btn-flat:hover { color: var(--text-normal); border-color: var(--text-muted); }
+            
+            /* Chat Interface Elements */
+            .hyoka-ctx-bar-track { height: 1px; background: var(--background-modifier-border); width: 100%; margin-top: 4px; }
+            .hyoka-ctx-bar-fill { height: 100%; background: var(--text-normal); transition: width 0.3s ease; }
+            
+            .hyoka-chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--background-modifier-border); border-radius:2px; padding:2px 8px; font-size:0.75em; font-family: var(--font-monospace); color: var(--text-muted); }
+            .hyoka-chip .x { cursor:pointer; opacity:0.5; }
+            .hyoka-chip .x:hover { opacity:1; color:var(--text-error); }
+            
+            /* Copy Buttons */
+            .hyoka-msg-copy { position:absolute; top:6px; right:6px; font-size:0.7em; padding:4px 8px; border-radius:2px; border:1px solid transparent; background:transparent; color: var(--text-muted); cursor:pointer; opacity:0; transition: all 0.15s ease; font-family: var(--font-monospace); display: flex; align-items: center; gap: 4px; }
+            .hyoka-msg-hover-container:hover .hyoka-msg-copy { opacity:1; }
+            .hyoka-msg-copy:hover { border-color: var(--background-modifier-border); color: var(--text-normal); }
+
+            /* Select Dropdown */
+            .hyoka-select { background: transparent; border: none; border-bottom: 1px solid var(--background-modifier-border); color: var(--text-normal); padding: 4px 0; border-radius: 0; font-family: var(--font-monospace); font-size: 0.85em; outline: none; cursor: pointer; width: 100%; }
+            .hyoka-select:focus { border-color: var(--text-normal); }
+
+            /* Webpage View Toolbar */
+            .hyoka-web-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--background-modifier-border); background: var(--background-primary); }
+            .hyoka-web-select { flex: 1; background: transparent; border: none; font-family: var(--font-monospace); color: var(--text-normal); font-size: 0.9em; outline: none; }
+        `;
+        document.head.appendChild(el);
     }
 
-    async activateView() {
+    async activateChatView() {
         const { workspace } = this.app;
-        let leaf = workspace.getLeavesOfType(VIEW_TYPE_HYOKA)[0];
+        let leaf = workspace.getLeavesOfType(VIEW_CHAT)[0];
         if (!leaf) {
             const rightLeaf = workspace.getRightLeaf(false);
-            if (rightLeaf) { leaf = rightLeaf; await leaf.setViewState({ type: VIEW_TYPE_HYOKA, active: true }); }
+            if (rightLeaf) { leaf = rightLeaf; await leaf.setViewState({ type: VIEW_CHAT, active: true }); }
         }
         if (leaf) workspace.revealLeaf(leaf);
     }
+
+    refreshChatViews() {
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_CHAT)) {
+            (leaf.view as HyokaChatView).refreshProfileSelector();
+        }
+    }
+
+    notifyLiveUpdate(path: string) { 
+        this.app.workspace.trigger('hyoka:file-updated', path); 
+    }
+
+    async callModelOnce(profile: AgentProfile, messages: ChatMessage[]): Promise<string> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (profile.apiKey) headers['Authorization'] = `Bearer ${profile.apiKey}`;
+        const res = await requestUrl({
+            url: `${profile.apiUrl}/chat/completions`, method: 'POST', headers,
+            body: JSON.stringify({ model: profile.modelName, messages, temperature: 0.1, stream: false })
+        });
+        const data = JSON.parse(res.text);
+        return data?.choices?.[0]?.message?.content || '';
+    }
+
+    estimateTokens(text: string): number { return Math.ceil((text || '').length / 4); }
 }
 
-// -------------------------------------------------------------
-// CHAT INTERFACE & EXECUTION LOOP
-// -------------------------------------------------------------
+
+// ================================================================
+// FILE PICKER 
+// ================================================================
+class FilePickerModal extends FuzzySuggestModal<TFile> {
+    constructor(app: App, private exclude: TFile[], private onPick: (files: TFile[]) => void) { super(app); }
+    getItems(): TFile[] { const excl = new Set(this.exclude.map(f => f.path)); return this.app.vault.getFiles().filter(f => !excl.has(f.path)); }
+    getItemText(item: TFile): string { return item.path; }
+    onChooseItem(item: TFile) { this.onPick([item]); }
+}
+
+// ================================================================
+// LIVE PREVIEW VIEW (Dynamic File Dropdown)
+// ================================================================
+export class HyokaPreviewView extends ItemView {
+    plugin: HyokaPlugin;
+    iframe!: HTMLIFrameElement;
+    fileSelect!: HTMLSelectElement;
+    targetPath: string = "";
+
+    constructor(leaf: WorkspaceLeaf, plugin: HyokaPlugin) { super(leaf); this.plugin = plugin; }
+    getViewType(): string { return VIEW_PREVIEW; }
+    getDisplayText(): string { return "RENDER"; }
+    getIcon(): string { return "layout-template"; }
+
+    async onOpen() {
+        const container = this.containerEl.children[1] as HTMLElement;
+        container.empty();
+        container.style.padding = "0";
+        container.style.overflow = "hidden";
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+
+        const toolbar = container.createEl('div', { cls: 'hyoka-web-toolbar' });
+        const refreshBtn = toolbar.createEl('button', { cls: 'hyoka-btn-icon' });
+        setIcon(refreshBtn, 'refresh-cw');
+        refreshBtn.onclick = () => this.refreshFileList(this.targetPath);
+        
+        this.fileSelect = toolbar.createEl('select', { cls: 'hyoka-web-select' });
+        this.fileSelect.onchange = () => {
+            this.targetPath = this.fileSelect.value;
+            this.reload();
+        };
+
+        this.iframe = container.createEl('iframe', { attr: { style: "width:100%; flex-grow:1; border:none; background:white;", sandbox: "allow-scripts allow-modals allow-forms allow-popups" } });
+
+        this.refreshFileList();
+
+        this.registerEvent(this.app.vault.on('create', () => this.refreshFileList(this.targetPath)));
+        this.registerEvent(this.app.vault.on('delete', () => this.refreshFileList()));
+        this.registerEvent(this.app.vault.on('rename', () => this.refreshFileList()));
+
+        this.registerEvent(this.app.vault.on('modify', async (file) => { 
+            if (file instanceof TFile && file.path === this.targetPath) await this.reload(); 
+        }));
+        this.registerEvent((this.app.workspace as any).on('hyoka:file-updated', async (path: string) => { 
+            if (path.endsWith('.html')) this.refreshFileList(path);
+            if (path === this.targetPath) await this.reload(); 
+        }));
+    }
+
+    refreshFileList(forceSelectPath?: string) {
+        const htmlFiles = this.app.vault.getFiles().filter(f => f.extension === 'html');
+        this.fileSelect.empty();
+        
+        if (htmlFiles.length === 0) {
+            this.fileSelect.createEl('option', { text: 'No .html files in vault', attr: { value: '' } });
+            this.targetPath = '';
+            this.reload();
+            return;
+        }
+
+        htmlFiles.sort((a, b) => b.stat.mtime - a.stat.mtime); // Newest first
+
+        let selectedMatched = false;
+        htmlFiles.forEach(f => {
+            const opt = this.fileSelect.createEl('option', { text: f.path, attr: { value: f.path } });
+            if (forceSelectPath && f.path === forceSelectPath) {
+                opt.selected = true;
+                selectedMatched = true;
+                this.targetPath = f.path;
+            }
+        });
+
+        if (!selectedMatched && htmlFiles.length > 0) {
+            if (!htmlFiles.find(f => f.path === this.targetPath)) {
+                this.targetPath = htmlFiles[0].path;
+                this.fileSelect.value = this.targetPath;
+            } else {
+                this.fileSelect.value = this.targetPath;
+            }
+        }
+        this.reload();
+    }
+
+    setTarget(path: string) { 
+        this.refreshFileList(path); 
+    }
+
+    injectHtmlStream(html: string) {
+        this.iframe.srcdoc = html;
+    }
+
+    async reload() {
+        if (!this.targetPath) {
+            this.iframe.srcdoc = `<body style="font-family:monospace;padding:2em;color:#666;background:#111;">NO TARGET SELECTED</body>`;
+            return;
+        }
+        try {
+            if (!(await this.app.vault.adapter.exists(this.targetPath))) return;
+            this.iframe.srcdoc = await this.app.vault.adapter.read(this.targetPath);
+        } catch (e: any) { }
+    }
+}
+
+// ================================================================
+// SLIDE DECK VIEW
+// ================================================================
+export class HyokaSlideView extends ItemView {
+    plugin: HyokaPlugin;
+    
+    constructor(leaf: WorkspaceLeaf, plugin: HyokaPlugin) { super(leaf); this.plugin = plugin; }
+    getViewType(): string { return VIEW_SLIDES; }
+    getDisplayText(): string { return "SLIDES"; }
+    getIcon(): string { return "presentation"; }
+    
+    async onOpen() {
+        const container = this.containerEl.children[1] as HTMLElement;
+        container.empty();
+        const stage = container.createEl('div', { attr: { style: 'width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-family:monospace; color:var(--text-muted);' } });
+        stage.setText('Slide deck compiler ready.');
+    }
+}
+
+// ================================================================
+// CHAT VIEW
+// ================================================================
 class HyokaChatView extends ItemView {
     plugin: HyokaPlugin;
     chatHistory: ChatMessage[] = [];
-    messageContainer: HTMLDivElement;
-    inputField: HTMLTextAreaElement;
-    profileSelector: HTMLSelectElement;
-    lifecycleComponent: Component;
-    
-    // Engine Control State
-    isExecuting: boolean = false;
+    attachedFiles: TFile[] = [];
+    messageContainer!: HTMLDivElement;
+    inputField!: HTMLTextAreaElement;
+    profileSelector!: HTMLSelectElement;
+    attachRow!: HTMLElement;
+    ctxFill!: HTMLElement;
+    ctxLabel!: HTMLElement;
+    lifecycle: Component;
+    isExecuting = false;
     abortController: AbortController | null = null;
 
-    constructor(leaf: WorkspaceLeaf, plugin: HyokaPlugin) {
-        super(leaf);
-        this.plugin = plugin;
-        this.lifecycleComponent = new Component();
-    }
-
-    getViewType(): string { return VIEW_TYPE_HYOKA; }
-    getDisplayText(): string { return "Hyoka Shell Console"; }
+    constructor(leaf: WorkspaceLeaf, plugin: HyokaPlugin) { super(leaf); this.plugin = plugin; this.lifecycle = new Component(); }
+    getViewType(): string { return VIEW_CHAT; }
+    getDisplayText(): string { return "SYS_CTRL"; }
     getIcon(): string { return "terminal"; }
 
     async onOpen() {
-        this.lifecycleComponent.load();
-        await this.loadActiveProfileHistory();
+        this.lifecycle.load();
+        await this.loadHistory();
 
-        const container = this.containerEl.children[1];
+        const container = this.containerEl.children[1] as HTMLElement;
         container.empty();
+        const wrapper = container.createEl('div', { attr: { style: 'display:flex; flex-direction:column; height:100%; padding:16px; font-family: var(--font-monospace); background: var(--background-primary);' } });
 
-        const wrapper = container.createEl('div', { 
-            attr: { style: 'display: flex; flex-direction: column; height: 100%; gap: 12px; padding: 12px; font-family: var(--font-interface);' }
-        });
-
-        // --- HEADER ---
-        const header = wrapper.createEl('div', {
-            attr: { style: 'display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 10px;' }
-        });
-        header.createEl('h5', { text: 'HYOKA', attr: { style: 'margin: 0; font-family: var(--font-monospace); font-size: 1.2em; letter-spacing: 0.5px;' } });
-        this.profileSelector = header.createEl('select', {
-            attr: { style: 'padding: 4px 8px; font-family: var(--font-monospace); font-size: 0.8em; border-radius: 4px; background: var(--background-primary);' }
-        });
+        // Header controls
+        const headerTop = wrapper.createEl('div', { attr: { style: 'display:flex; gap:16px; align-items:center; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 12px; margin-bottom: 12px;' } });
+        
+        const identityDiv = headerTop.createEl('div', { attr: { style: 'display:flex; align-items:center; gap: 8px; flex: 1;' }});
+        setIcon(identityDiv.createEl('span', { attr: { style: 'color: var(--text-muted); display: flex;' }}), 'cpu');
+        this.profileSelector = identityDiv.createEl('select', { cls: 'hyoka-select' });
         this.refreshProfileSelector();
         this.profileSelector.addEventListener('change', async () => {
             this.plugin.settings.activeProfileId = this.profileSelector.value;
             await this.plugin.saveSettings();
-            await this.loadActiveProfileHistory();
-            this.renderMessages();
+            this.updateContextBar();
         });
 
-        // --- COMMAND STRIP (New Feature) ---
-        const commandStrip = wrapper.createEl('div', { attr: { style: 'display: flex; gap: 8px; padding-bottom: 8px;' } });
+        // Quick Actions
+        const quickActions = headerTop.createEl('div', { attr: { style: 'display:flex; gap:8px;' } });
         
-        const attachBtn = commandStrip.createEl('button', { text: 'Attach Active Note', cls: 'hyoka-toolbar-btn' });
-        attachBtn.addEventListener('click', () => this.injectActiveNoteContext());
+        const btnWeb = quickActions.createEl('button', { cls: 'hyoka-btn-icon' });
+        setIcon(btnWeb, 'globe');
+        btnWeb.onclick = () => this.runTurn('Build a responsive webpage for a modern landing page.');
 
-        const stopBtn = commandStrip.createEl('button', { text: 'Stop Run', cls: 'hyoka-toolbar-btn danger' });
-        stopBtn.addEventListener('click', () => {
-            if (this.abortController && this.isExecuting) {
-                this.abortController.abort();
-                new Notice("Execution aborted.");
-            }
+        const btnSvg = quickActions.createEl('button', { cls: 'hyoka-btn-icon' });
+        setIcon(btnSvg, 'image');
+        btnSvg.onclick = () => { this.inputField.value = 'Design a clean SVG logo. Respond ONLY with raw <svg>...</svg> markup.'; this.inputField.focus(); };
+
+        const btnStop = quickActions.createEl('button', { cls: 'hyoka-btn-icon' });
+        setIcon(btnStop, 'square');
+        btnStop.onclick = () => { if (this.abortController && this.isExecuting) { this.abortController.abort(); new Notice('SIGINT SENT.'); } };
+
+        const btnClear = quickActions.createEl('button', { cls: 'hyoka-btn-icon' });
+        setIcon(btnClear, 'rotate-ccw');
+        btnClear.onclick = () => {
+            this.chatHistory = [{ role: 'system', content: this.getSystemPrompt() }];
+            this.saveHistory(); this.renderMessages();
+        };
+
+        // Main Chat Area
+        this.messageContainer = wrapper.createEl('div', { attr: { style: 'flex-grow:1; overflow-y:auto; display:flex; flex-direction:column; gap:20px; padding-right:8px; margin-bottom: 12px;' } });
+
+        // Memory Bar
+        const ctxWrap = wrapper.createEl('div', { attr: { style: 'display:flex; flex-direction:column; margin-bottom: 12px;' } });
+        this.ctxLabel = ctxWrap.createEl('div', { text: 'MEM 0%', attr: { style: 'font-size:0.75em; color:var(--text-muted); align-self: flex-end;' } });
+        const track = ctxWrap.createEl('div', { cls: 'hyoka-ctx-bar-track' });
+        this.ctxFill = track.createEl('div', { cls: 'hyoka-ctx-bar-fill' });
+        this.updateContextBar();
+
+        this.attachRow = wrapper.createEl('div', { attr: { style: 'display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom: 8px;' } });
+        this.renderAttachments();
+
+        // Input Area
+        const inputArea = wrapper.createEl('div', { attr: { style: 'display:flex; flex-direction:column; gap:6px;' } });
+        
+        const attachBtn = inputArea.createEl('button', { cls: 'hyoka-btn-flat', attr: { style: 'align-self: flex-start; padding: 2px 6px; font-size: 0.75em;' } });
+        setIcon(attachBtn, 'paperclip');
+        attachBtn.appendChild(document.createTextNode(' File'));
+        attachBtn.onclick = () => new FilePickerModal(this.app, this.attachedFiles, (files) => {
+            this.attachedFiles.push(...files);
+            this.renderAttachments();
+        }).open();
+
+        const inputRow = inputArea.createEl('div', { attr: { style: 'display:flex; gap:8px; align-items:flex-end;' } });
+        this.inputField = inputRow.createEl('textarea', {
+            attr: { placeholder: 'INPUT...', rows: '1', style: 'flex-grow:1; resize:none; border: none; border-bottom: 1px solid var(--background-modifier-border); border-radius: 0; padding:8px 0; background:transparent; font-family:var(--font-monospace); font-size:0.9em; outline: none;' }
+        });
+        
+        this.inputField.addEventListener('input', () => {
+            this.inputField.style.height = 'auto';
+            this.inputField.style.height = Math.min(this.inputField.scrollHeight, 120) + 'px';
         });
 
-        const clearBtn = commandStrip.createEl('button', { text: 'Clear Memory', cls: 'hyoka-toolbar-btn' });
-        clearBtn.addEventListener('click', () => {
-            this.chatHistory = [{ role: 'system', content: this.plugin.getActiveProfile().systemPrompt }];
-            this.saveActiveProfileHistory();
-            this.renderMessages();
-            new Notice("Memory wiped.");
-        });
-
-        // --- MESSAGE CONTAINER ---
-        this.messageContainer = wrapper.createEl('div', {
-            attr: { style: 'flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding-right: 4px;' }
-        });
-
-        // --- INPUT AREA ---
-        const inputArea = wrapper.createEl('div', { attr: { style: 'display: flex; gap: 8px; align-items: flex-end;' } });
-        this.inputField = inputArea.createEl('textarea', {
-            attr: { 
-                placeholder: 'Instruct agent or broadcast parameters...', 
-                rows: '2',
-                style: 'flex-grow: 1; resize: none; border-radius: 6px; border: 1px solid var(--background-modifier-border); padding: 10px; background: var(--background-primary); font-size: 0.9em;'
-            }
-        });
-
-        const sendBtn = inputArea.createEl('button', { text: 'RUN', cls: 'mod-cta', attr: { style: 'padding: 8px 16px; height: 42px; font-weight: 700; font-family: var(--font-monospace);' } });
-
-        sendBtn.addEventListener('click', () => { if (!this.isExecuting) this.startAgentLoop(this.inputField.value.trim()); });
-        this.inputField.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!this.isExecuting) this.startAgentLoop(this.inputField.value.trim());
-            }
+        const execBtn = inputRow.createEl('button', { cls: 'hyoka-btn-icon', attr: { style: 'padding: 8px;' } });
+        setIcon(execBtn, 'play');
+        execBtn.style.color = 'var(--text-normal)';
+        execBtn.onclick = () => { if (!this.isExecuting) this.runTurn(this.inputField.value.trim()); };
+        
+        this.inputField.addEventListener('keydown', (e) => { 
+            if (e.key === 'Enter' && !e.shiftKey) { 
+                e.preventDefault(); 
+                if (!this.isExecuting) this.runTurn(this.inputField.value.trim()); 
+            } 
         });
 
         this.renderMessages();
+    }
+
+    getSystemPrompt() {
+        const profile = this.plugin.getActiveProfile();
+        let prompt = profile.systemPrompt;
+        if (this.plugin.settings.hyperizedMode) {
+            prompt += '\n\n[SYS_OVR: HYPERIZED MODE ACTIVE. When generating markdown responses, freely embed interactive HTML, CSS, and Tailwind directly within the markdown to construct highly advanced, visually rich notes.]';
+        }
+        return prompt;
+    }
+
+    renderAttachments() {
+        this.attachRow.empty();
+        for (const file of this.attachedFiles) {
+            const chip = this.attachRow.createEl('span', { cls: 'hyoka-chip' });
+            chip.createEl('span', { text: file.basename });
+            const x = chip.createEl('span', { cls: 'x' });
+            setIcon(x, 'x');
+            x.onclick = () => { this.attachedFiles = this.attachedFiles.filter(f => f !== file); this.renderAttachments(); };
+        }
+    }
+
+    private async buildAttachmentContext(): Promise<string> {
+        if (this.attachedFiles.length === 0) return '';
+        let out = '[INJECTED FILE CONTEXT]\n';
+        for (const f of this.attachedFiles) {
+            const content = await this.plugin.app.vault.read(f);
+            out += `\n--- ${f.path} ---\n${content}\n`;
+        }
+        return out;
     }
 
     refreshProfileSelector() {
@@ -382,337 +717,343 @@ class HyokaChatView extends ItemView {
         });
     }
 
-    async loadActiveProfileHistory() {
+    updateContextBar() {
         const profile = this.plugin.getActiveProfile();
-        const jsonPath = `agent-memory/${profile.id}/session_history.json`;
+        const used = this.plugin.estimateTokens(this.chatHistory.map(m => m.content || '').join('\n'));
+        const max = profile.maxContextTokens || 128000;
+        const pct = Math.min(100, Math.round((used / max) * 100));
+        this.ctxLabel.setText(`MEM ${pct}% [${used.toLocaleString()}/${max.toLocaleString()}]`);
+        this.ctxFill.style.width = `${pct}%`;
+        this.ctxFill.style.background = pct > 85 ? 'var(--text-error)' : pct > 60 ? 'var(--text-warning)' : 'var(--text-normal)';
+    }
+
+    private historyPath(): string {
+        const profile = this.plugin.getActiveProfile();
+        return `${AGENT_MEMORY_ROOT}/${profile.id}/session_history.json`;
+    }
+
+    async loadHistory() {
+        const path = this.historyPath();
         try {
-            if (await this.plugin.app.vault.adapter.exists(jsonPath)) {
-                const rawData = await this.plugin.app.vault.adapter.read(jsonPath);
-                const parsed = JSON.parse(rawData);
-                this.chatHistory = parsed.length > 0 ? parsed : [{ role: 'system', content: profile.systemPrompt }];
+            if (await this.plugin.app.vault.adapter.exists(path)) {
+                const parsed = JSON.parse(await this.plugin.app.vault.adapter.read(path));
+                this.chatHistory = parsed.length ? parsed : [{ role: 'system', content: this.getSystemPrompt() }];
             } else {
-                this.chatHistory = [{ role: 'system', content: profile.systemPrompt }];
+                this.chatHistory = [{ role: 'system', content: this.getSystemPrompt() }];
             }
-        } catch (e) { this.chatHistory = [{ role: 'system', content: profile.systemPrompt }]; }
+        } catch { this.chatHistory = [{ role: 'system', content: this.getSystemPrompt() }]; }
     }
 
-    async saveActiveProfileHistory() {
-        const profile = this.plugin.getActiveProfile();
-        const jsonPath = `agent-memory/${profile.id}/session_history.json`;
-        await this.plugin.app.vault.adapter.write(jsonPath, JSON.stringify(this.chatHistory, null, 2));
-    }
-
-    // --- CONTEXT INJECTION ROUTINE ---
-    async injectActiveNoteContext() {
-        const activeFile = this.plugin.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice("No active note found to attach.");
-            return;
-        }
-        const content = await this.plugin.app.vault.read(activeFile);
-        this.chatHistory.push({
-            role: 'system',
-            content: `[CONTEXTUAL INJECTION BY USER] Focus on the following file data (${activeFile.path}):\n\n${content}`
-        });
-        new Notice(`Attached ${activeFile.basename} to agent memory context.`);
+    async saveHistory() { 
+        this.chatHistory[0].content = this.getSystemPrompt(); // ensure mode changes sync
+        await this.plugin.app.vault.adapter.write(this.historyPath(), JSON.stringify(this.chatHistory, null, 2)); 
     }
 
     async renderMessages() {
         if (!this.messageContainer) return;
         this.messageContainer.empty();
-
         for (let i = 1; i < this.chatHistory.length; i++) {
             const msg = this.chatHistory[i];
-            
-            // Render user injected context visibly as a system block
-            if (msg.role === 'system' && msg.content?.startsWith('[CONTEXTUAL INJECTION')) {
-                const sysDiv = this.messageContainer.createEl('div', {
-                    attr: { style: 'padding: 8px 12px; border-radius: 4px; background: var(--background-secondary-alt); border-left: 2px solid var(--text-muted); font-size: 0.85em; opacity: 0.8;' }
-                });
-                sysDiv.createEl('strong', { text: '📎 INJECTED FILE CONTEXT', attr: { style: 'display: block; margin-bottom: 4px;' } });
-                sysDiv.createEl('span', { text: "Data successfully loaded into agent operational memory." });
-                continue;
-            }
-
             if (msg.role === 'system' || msg.role === 'tool' || msg.tool_calls) continue;
-
+            
             const isUser = msg.role === 'user';
-            const msgDiv = this.messageContainer.createEl('div', {
-                attr: {
-                    style: `padding: 12px 16px; border-radius: 8px; max-width: 95%; box-shadow: 0 2px 8px rgba(0,0,0,0.02); ${
-                        isUser ? 'align-self: flex-end; background: var(--interactive-accent); color: var(--text-on-accent);' : 'align-self: flex-start; background: var(--background-secondary); border: 1px solid var(--background-modifier-border);'
-                    }`
-                }
+            
+            const wrapperDiv = this.messageContainer.createEl('div', { cls: 'hyoka-msg-hover-container', attr: { style: 'position: relative; display: flex; flex-direction: column;' }});
+            
+            const div = wrapperDiv.createEl('div', {
+                attr: { style: `padding-bottom:12px; font-size: 0.9em; ${isUser ? 'align-self:flex-end; text-align: right; border-right: 1px solid var(--text-normal); padding-right: 12px;' : 'align-self:flex-start; text-align: left; border-left: 1px solid var(--background-modifier-border); padding-left: 12px;'}` }
             });
+            
+            const copyBtn = wrapperDiv.createEl('button', { cls: 'hyoka-msg-copy' });
+            setIcon(copyBtn, 'copy');
+            copyBtn.appendChild(document.createTextNode(' CPY'));
+            if (isUser) { copyBtn.style.right = '16px'; copyBtn.style.top = '-8px'; }
+            else { copyBtn.style.left = '16px'; copyBtn.style.right = 'auto'; copyBtn.style.top = '-8px'; }
+            
+            copyBtn.onclick = (e) => { 
+                e.stopPropagation(); 
+                navigator.clipboard.writeText(msg.content || ''); 
+                copyBtn.innerHTML = '';
+                setIcon(copyBtn, 'check');
+                copyBtn.appendChild(document.createTextNode(' OK'));
+                setTimeout(() => {
+                    copyBtn.innerHTML = '';
+                    setIcon(copyBtn, 'copy');
+                    copyBtn.appendChild(document.createTextNode(' CPY'));
+                }, 1500); 
+                new Notice("COPIED");
+            };
 
-            msgDiv.createEl('strong', { 
-                text: isUser ? 'User //' : `${this.plugin.getActiveProfile().name} //`,
-                attr: { style: 'display: block; font-size: 0.75em; text-transform: uppercase; font-family: var(--font-monospace); margin-bottom: 6px;' } 
-            });
-
-            const bodyContent = msgDiv.createEl('div', { cls: 'markdown-rendered' });
-            await MarkdownRenderer.renderMarkdown(msg.content || '', bodyContent, this.plugin.app.workspace.getActiveFile()?.path || '', this.lifecycleComponent);
+            div.createEl('div', { text: isUser ? 'USR' : `SYS`, attr: { style: 'font-size:0.7em; color:var(--text-muted); margin-bottom:6px;' } });
+            const body = div.createEl('div', { cls: 'markdown-rendered' });
+            await MarkdownRenderer.renderMarkdown(msg.content || '', body, '', this.lifecycle);
         }
         this.messageContainer.scrollTop = this.messageContainer.scrollHeight;
+        this.updateContextBar();
     }
 
-    // -------------------------------------------------------------
-    // ASYNC AGENT LOOP ENGINE
-    // -------------------------------------------------------------
-    async startAgentLoop(initialText?: string) {
-        if (initialText) {
+    async runTurn(text: string) {
+        const attachmentContext = await this.buildAttachmentContext();
+        if (text) {
             this.inputField.value = '';
-            this.chatHistory.push({ role: 'user', content: initialText });
+            this.inputField.style.height = 'auto';
+            const full = attachmentContext ? `${attachmentContext}\n\n${text}` : text;
+            this.chatHistory.push({ role: 'user', content: full });
             await this.renderMessages();
         }
 
+        if (text && /\b(website|ui|html|frontend)\b/i.test(text)) {
+            await this.buildWebsiteLive(text);
+            return;
+        }
+        await this.runAgentLoop();
+    }
+
+    private generateSlug(prompt: string): string {
+        const base = prompt.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').slice(0, 15).toLowerCase().replace(/^-|-$/g, '');
+        return `ui-${base || 'gen'}-${Math.floor(Date.now() / 1000).toString().slice(-4)}.html`;
+    }
+
+    private async buildWebsiteLive(prompt: string) {
         this.isExecuting = true;
         this.abortController = new AbortController();
-        const currentProfile = this.plugin.getActiveProfile();
+        const profile = this.plugin.getActiveProfile();
         
-        const loadingMsgIndex = this.chatHistory.push({ role: 'assistant', content: '' }) - 1;
+        const filename = this.generateSlug(prompt);
+        const targetPath = filename;
+
+        const previewLeaf = this.app.workspace.getLeavesOfType(VIEW_PREVIEW)[0] || this.app.workspace.getRightLeaf(true);
+        if (previewLeaf) {
+            await previewLeaf.setViewState({ type: VIEW_PREVIEW, active: true });
+            this.app.workspace.revealLeaf(previewLeaf);
+            (previewLeaf.view as HyokaPreviewView).setTarget(targetPath);
+        }
+
+        const loadingIndex = this.chatHistory.push({ role: 'assistant', content: '' }) - 1;
         await this.renderMessages();
+        const msgDiv = this.messageContainer.lastElementChild?.querySelector('div:last-child') as HTMLElement;
+        if(msgDiv) {
+            msgDiv.empty();
+            msgDiv.createEl('div', { text: `SYS // UI PIPELINE -> ${filename}`, attr: { style: 'font-size:0.7em; color:var(--text-normal); margin-bottom:6px;' } });
+        }
+        
+        const mainContent = msgDiv?.createEl('div', { attr: { style: 'font-size:0.85em; color:var(--text-muted);' }, text: 'Streaming...' });
 
-        const messageDiv = this.messageContainer.lastElementChild as HTMLElement;
-        messageDiv.empty();
-        messageDiv.createEl('strong', { text: `${currentProfile.name} //`, attr: { style: 'display: block; font-size: 0.75em; text-transform: uppercase; font-family: var(--font-monospace); margin-bottom: 8px;' } });
+        try {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (profile.apiKey) headers['Authorization'] = `Bearer ${profile.apiKey}`;
+            const messages: ChatMessage[] = [
+                { role: 'system', content: WEBSITE_SYSTEM_PROMPT },
+                ...this.chatHistory.slice(1, -1).filter(m => m.role === 'user' || m.role === 'assistant').filter(m => m.content),
+                { role: 'user', content: prompt }
+            ];
+            
+            const response = await fetch(`${profile.apiUrl}/chat/completions`, {
+                method: 'POST', headers, signal: this.abortController.signal,
+                body: JSON.stringify({ model: profile.modelName, messages, temperature: 0.1, stream: true })
+            });
+            
+            if (!response.body) throw new Error('No stream.');
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let raw = '';
+            
+            const view = previewLeaf?.view as HyokaPreviewView;
 
-        const thinkDetails = messageDiv.createEl('details', { attr: { style: 'margin-bottom: 12px; background: var(--background-secondary-alt); border-left: 3px solid var(--interactive-accent); padding: 10px; display: none;' } });
-        thinkDetails.createEl('summary', { text: 'Thinking..', attr: { style: 'cursor: pointer; font-size: 0.75em; font-family: var(--font-monospace); font-weight: 600;' } });
-        const thinkContent = thinkDetails.createEl('div', { attr: { style: 'font-size: 0.85em; font-family: var(--font-monospace); margin-top: 6px; white-space: pre-wrap;' } });
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                for (const line of chunk.split('\n').filter(l => l.trim())) {
+                    if (!line.startsWith('data: ')) continue;
+                    if (line.slice(6).trim() === '[DONE]') continue;
+                    try {
+                        const parsed = JSON.parse(line.slice(6));
+                        const delta = parsed.choices[0].delta;
+                        if (delta.content) { 
+                            raw += delta.content; 
+                            const cleanHtml = raw.replace(/```html/gi, '').replace(/```/g, '');
+                            if (view) view.injectHtmlStream(cleanHtml);
+                            if (mainContent) mainContent.setText(`Compiled bytes: ${raw.length}`);
+                        }
+                    } catch { }
+                }
+            }
+            
+            const finalHtml = raw.replace(/```html/gi, '').replace(/```/g, '').trim();
+            await ensureParentFolders(this.plugin, targetPath);
+            await this.plugin.app.vault.adapter.write(targetPath, finalHtml); 
+            
+            if (mainContent) mainContent.setText(`UI written to ${targetPath}.`);
+            this.chatHistory[loadingIndex].content = `UI compiled to \`${targetPath}\`.`;
 
-        const mainContent = messageDiv.createEl('div', { cls: 'markdown-rendered' });
+        } catch (err: any) {
+            if (err.name !== 'AbortError') this.chatHistory[loadingIndex].content = `Pipeline failure: ${err.message}`;
+        }
 
-        const exposedTools = McpToolRegistry.getCapabilities().map(t => ({
-            type: "function",
-            function: { name: t.name, description: t.description, parameters: t.inputSchema }
-        }));
+        await this.saveHistory();
+        await this.renderMessages();
+        this.isExecuting = false;
+    }
 
-        let pipelineExecutionActive = true;
-        let controlIterationLimit = 0;
+    private async runAgentLoop() {
+        this.isExecuting = true;
+        this.abortController = new AbortController();
+        const profile = this.plugin.getActiveProfile();
 
-        while (pipelineExecutionActive && controlIterationLimit < 5) {
-            controlIterationLimit++;
+        let iterations = 0;
+        const MAX_ITER = 7;
+
+        while (iterations < MAX_ITER) {
+            iterations++;
+            const loadingIndex = this.chatHistory.push({ role: 'assistant', content: '' }) - 1;
+            await this.renderMessages();
+            
+            const msgDiv = this.messageContainer.lastElementChild?.querySelector('div:last-child') as HTMLElement;
+            if (msgDiv) {
+                msgDiv.empty();
+                msgDiv.createEl('div', { text: `SYS`, attr: { style: 'font-size:0.7em; color:var(--text-muted); margin-bottom:6px;' } });
+            }
+            
+            const processLog = msgDiv?.createEl('div', { attr: { style: 'font-size: 0.75em; color: var(--text-normal); margin-bottom: 8px;' } });
+            const mainContent = msgDiv?.createEl('div', { cls: 'markdown-rendered' });
+
+            let fullContent = '';
+            let toolCall: any = null;
+
             try {
                 const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                if (currentProfile.apiKey) headers['Authorization'] = `Bearer ${currentProfile.apiKey}`;
-
-                const response = await fetch(`${currentProfile.apiUrl}/chat/completions`, {
-                    method: 'POST',
-                    headers: headers,
-                    signal: this.abortController.signal,
+                if (profile.apiKey) headers['Authorization'] = `Bearer ${profile.apiKey}`;
+                const response = await fetch(`${profile.apiUrl}/chat/completions`, {
+                    method: 'POST', headers, signal: this.abortController.signal,
                     body: JSON.stringify({
-                        model: currentProfile.modelName,
-                        messages: this.chatHistory.slice(0, this.chatHistory.length - 1).filter(m => m.content !== ''),
-                        temperature: currentProfile.temperature,
-                        stream: true,
-                        tools: exposedTools
+                        model: profile.modelName,
+                        messages: this.chatHistory.slice(0, -1).filter(m => m.content !== ''),
+                        temperature: profile.temperature, stream: true,
+                        tools: McpToolRegistry.asOpenAiTools(this.plugin)
                     })
                 });
-
-                if (!response.body) throw new Error("Null JSON stream target error.");
+                
+                if (!response.body) throw new Error('Stream failed.');
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
-                
-                let fullRawStream = ""; 
-                let fullThinking = "";
-                let fullContent = "";
-                let runtimeDetectedToolCall: any = null;
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
                     const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n').filter(line => line.trim() !== '');
-                    
-                    for (const line of lines) {
-                        if (line.replace(/^data: /, '').trim() === '[DONE]') continue;
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const parsed = JSON.parse(line.slice(6));
-                                const delta = parsed.choices[0].delta;
-                                
-                                if (delta.tool_calls) {
-                                    if (!runtimeDetectedToolCall) runtimeDetectedToolCall = { id: "", function: { name: "", arguments: "" } };
-                                    const call = delta.tool_calls[0];
-                                    if (call.id) runtimeDetectedToolCall.id += call.id;
-                                    if (call.function?.name) runtimeDetectedToolCall.function.name += call.function.name;
-                                    if (call.function?.arguments) runtimeDetectedToolCall.function.arguments += call.function.arguments;
-
-                                    thinkDetails.style.display = 'block';
-                                    thinkDetails.setAttribute('open', '');
-                                    thinkContent.innerText = `[ROUTING INSTRUCTION TO MCP CORE]: ${runtimeDetectedToolCall.function.name}\nArgs: ${runtimeDetectedToolCall.function.arguments}`;
-                                    continue;
-                                }
-
-                                if (delta.content) fullRawStream += delta.content;
-
-                                if (fullRawStream.includes('<think>')) {
-                                    const parts = fullRawStream.split('<think>');
-                                    const afterThink = parts[1] || "";
-                                    if (afterThink.includes('</think>')) {
-                                        const splitEnd = afterThink.split('</think>');
-                                        fullThinking = splitEnd[0];
-                                        fullContent = parts[0] + splitEnd.slice(1).join('</think>');
-                                        thinkDetails.removeAttribute('open');
-                                    } else {
-                                        fullThinking = afterThink;
-                                        fullContent = parts[0];
-                                        thinkDetails.style.display = 'block';
-                                        if (!thinkDetails.hasAttribute('open')) thinkDetails.setAttribute('open', '');
-                                    }
-                                } else {
-                                    fullContent = fullRawStream;
-                                }
-                                
-                                if (delta.reasoning_content) {
-                                    fullThinking += delta.reasoning_content;
-                                    thinkDetails.style.display = 'block';
-                                    if (!thinkDetails.hasAttribute('open')) thinkDetails.setAttribute('open', '');
-                                }
-
-                                if (fullThinking) thinkContent.innerText = fullThinking;
-                                if (fullContent) {
-                                    mainContent.empty();
-                                    await MarkdownRenderer.renderMarkdown(fullContent, mainContent, this.plugin.app.workspace.getActiveFile()?.path || '', this.lifecycleComponent);
+                    for (const line of chunk.split('\n').filter(l => l.trim())) {
+                        if (!line.startsWith('data: ')) continue;
+                        if (line.slice(6).trim() === '[DONE]') continue;
+                        try {
+                            const parsed = JSON.parse(line.slice(6));
+                            const delta = parsed.choices[0].delta;
+                            if (delta.tool_calls) {
+                                if (!toolCall) toolCall = { id: '', function: { name: '', arguments: '' } };
+                                const call = delta.tool_calls[0];
+                                if (call.id) toolCall.id += call.id;
+                                if (call.function?.name) toolCall.function.name += call.function.name;
+                                if (call.function?.arguments) toolCall.function.arguments += call.function.arguments;
+                                if(processLog) processLog.setText(`EXEC: ${toolCall.function.name}...`);
+                                continue;
+                            }
+                            if (delta.content) { 
+                                fullContent += delta.content; 
+                                if(mainContent) {
+                                    mainContent.empty(); 
+                                    await MarkdownRenderer.renderMarkdown(fullContent, mainContent, '', this.lifecycle);
                                 }
                                 this.messageContainer.scrollTop = this.messageContainer.scrollHeight;
-                            } catch (e) {}
-                        }
+                            }
+                        } catch { }
                     }
                 }
+            } catch (err: any) {
+                if (err.name === 'AbortError') { this.isExecuting = false; return; }
+                if (mainContent) mainContent.setText(`ERR: ${err.message}`);
+                this.chatHistory[loadingIndex].content = `ERR: ${err.message}`;
+                break;
+            }
 
-                // --- TOOL EXECUTION INTERCEPT ROUTING ---
-                if (runtimeDetectedToolCall && runtimeDetectedToolCall.function.name) {
-                    const parsedArguments = JSON.parse(runtimeDetectedToolCall.function.arguments || '{}');
-
-                    // 1. Destructive Action UI Override (Security sandbox)
-                    if (runtimeDetectedToolCall.function.name === 'request_file_deletion') {
-                        // We must save the LLM's tool call intent into history before pausing
-                        this.chatHistory.splice(this.chatHistory.length - 1, 0, {
-                            role: 'assistant', content: null, tool_calls: [{ id: runtimeDetectedToolCall.id, type: 'function', function: runtimeDetectedToolCall.function }]
-                        });
-                        this.renderDeletionWarning(runtimeDetectedToolCall, parsedArguments, loadingMsgIndex);
-                        return; // Halt the automatic loop entirely until user interaction
-                    }
-
-                    // 2. Standard Safe Execution Route
-                    const trackingObject = {
-                        role: 'assistant',
-                        content: null,
-                        tool_calls: [{ id: runtimeDetectedToolCall.id, type: 'function', function: runtimeDetectedToolCall.function }]
-                    };
-                    this.chatHistory.splice(this.chatHistory.length - 1, 0, trackingObject as any);
-
-                    const executionResponseStr = await McpToolRegistry.executeTool(runtimeDetectedToolCall.function.name, parsedArguments, this.plugin);
-
-                    this.chatHistory.splice(this.chatHistory.length - 1, 0, {
-                        role: 'tool',
-                        tool_call_id: runtimeDetectedToolCall.id,
-                        name: runtimeDetectedToolCall.function.name,
-                        content: executionResponseStr
-                    });
-                    continue; // Loop fires again to feed tool result to the model
-                } else {
-                    this.chatHistory[loadingMsgIndex].content = fullContent;
-                    pipelineExecutionActive = false;
-                }
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    mainContent.innerText += `\n\n[USER ABORTED EXECUTION]`;
-                    this.chatHistory[loadingMsgIndex].content = mainContent.innerText;
-                } else {
-                    mainContent.innerText = `Agentic Processing Pipeline Error: ${error.message}`;
-                }
-                pipelineExecutionActive = false;
+            if (toolCall && toolCall.function.name) {
+                let args: any = {};
+                try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch { }
+                this.chatHistory.splice(this.chatHistory.length - 1, 0, { role: 'assistant', content: null, tool_calls: [{ id: toolCall.id, type: 'function', function: toolCall.function }] });
+                const result = await McpToolRegistry.executeTool(toolCall.function.name, args, this.plugin);
+                this.chatHistory.splice(this.chatHistory.length - 1, 0, { role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: result });
+                await this.saveHistory();
+                continue;
+            } else {
+                this.chatHistory[loadingIndex].content = fullContent;
+                await this.saveHistory();
+                this.updateContextBar();
+                break;
             }
         }
-        
-        thinkDetails.removeAttribute('open');
-        await this.saveActiveProfileHistory();
         this.isExecuting = false;
-        this.abortController = null;
     }
-
-    // --- DELETION SECURITY SANDBOX UI ---
-    renderDeletionWarning(toolCall: any, args: any, loadingMsgIndex: number) {
-        this.chatHistory.pop(); // Pop the loading index out to make room for the UI
-        
-        const warningDiv = this.messageContainer.createEl('div', {
-            attr: { style: 'padding: 16px; border-radius: 8px; border: 2px solid var(--text-error); background: rgba(255, 0, 0, 0.05); margin-top: 10px;' }
-        });
-
-        warningDiv.createEl('strong', { text: 'CRITICAL ACTION AUTHORIZATION', attr: { style: 'display: block; color: var(--text-error); font-family: var(--font-monospace); font-size: 0.9em; margin-bottom: 8px;' } });
-        warningDiv.createEl('p', { text: `The agent is requesting to delete the following file:`, attr: { style: 'margin: 0 0 4px 0;' } });
-        warningDiv.createEl('code', { text: args.path, attr: { style: 'display: block; padding: 6px; background: var(--background-primary); border-radius: 4px; margin-bottom: 10px; font-weight: bold;' } });
-        warningDiv.createEl('p', { text: `Agent's Reason: "${args.reason}"`, attr: { style: 'font-style: italic; opacity: 0.8; font-size: 0.9em; margin-bottom: 12px;' } });
-
-        const btnRow = warningDiv.createEl('div', { attr: { style: 'display: flex; gap: 10px;' } });
-        const acceptBtn = btnRow.createEl('button', { text: 'AUTHORIZE DELETION', attr: { style: 'background: var(--text-error); color: white; border: none; font-weight: bold;' } });
-        const declineBtn = btnRow.createEl('button', { text: 'DECLINE' });
-
-        acceptBtn.addEventListener('click', async () => {
-            warningDiv.empty();
-            warningDiv.createEl('p', { text: `Processing deletion...` });
-            let resultStatus = "";
-            try {
-                const file = this.plugin.app.vault.getAbstractFileByPath(args.path);
-                if (file instanceof TFile) {
-                    await this.plugin.app.vault.trash(file, true);
-                    resultStatus = "System Success: File has been permanently deleted.";
-                } else resultStatus = "System Error: File does not exist.";
-            } catch (e) { resultStatus = `System Error: ${e.message}`; }
-
-            this.chatHistory.push({ role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: resultStatus });
-            warningDiv.remove();
-            this.startAgentLoop(); 
-        });
-
-        declineBtn.addEventListener('click', () => {
-            this.chatHistory.push({ role: 'tool', tool_call_id: toolCall.id, name: toolCall.function.name, content: "USER DENIED PERMISSION. The file was NOT deleted." });
-            warningDiv.remove();
-            this.startAgentLoop(); 
-        });
-
-        this.messageContainer.scrollTop = this.messageContainer.scrollHeight;
-    }
-
-    async onClose() { this.lifecycleComponent.unload(); }
 }
 
+// ================================================================
+// SETTINGS TAB
+// ================================================================
 class HyokaSettingTab extends PluginSettingTab {
     plugin: HyokaPlugin;
-    constructor(app: any, plugin: HyokaPlugin) { super(app, plugin); this.plugin = plugin; }
+    constructor(app: App, plugin: HyokaPlugin) { super(app, plugin); this.plugin = plugin; }
 
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+        containerEl.createEl('h2', { text: 'SYS_CFG', attr: { style: 'font-family: var(--font-monospace); font-weight: normal; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 12px;' } });
 
-        containerEl.createEl('h2', { text: 'Hyoka Control Panel' });
-        containerEl.createEl('p', { text: 'Manage localized orchestration pipelines and execution metrics.', attr: { style: 'font-size: 0.9em; color: var(--text-muted); margin-bottom: 24px;' } });
+        new Setting(containerEl).setName('HYPERIZED MODE').setDesc('Allows AI to directly inject interactive HTML/CSS/JS into markdown outputs.')
+            .addToggle(t => t.setValue(this.plugin.settings.hyperizedMode).onChange(async v => { this.plugin.settings.hyperizedMode = v; await this.plugin.saveSettings(); }));
+
+        const profilesHeader = containerEl.createEl('div', { attr: { style: 'display:flex; justify-content:space-between; align-items:center; margin-top: 32px; margin-bottom: 16px;' } });
+        profilesHeader.createEl('div', { text: 'PROFILES', attr: { style: 'font-family: var(--font-monospace); color: var(--text-muted);' } });
+        
+        const addBtn = profilesHeader.createEl('button', { cls: 'hyoka-btn-flat' });
+        setIcon(addBtn, 'plus');
+        addBtn.onclick = async () => {
+            this.plugin.settings.profiles.push(freshProfile());
+            await this.plugin.saveSettings();
+            this.plugin.refreshChatViews();
+            this.display();
+        };
 
         this.plugin.settings.profiles.forEach((profile) => {
-            const card = containerEl.createEl('div', { cls: 'hyoka-setting-card' });
-            card.createEl('h4', { text: `Runtime Core Instance: ${profile.name}` });
+            const card = containerEl.createEl('div', { cls: 'hyoka-card' });
+            const cardHeader = card.createEl('div', { attr: { style: 'display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 12px; margin-bottom: 12px;' } });
+            
+            const titleRow = cardHeader.createEl('div', { attr: { style: 'display:flex; align-items:center; gap:8px;' }});
+            setIcon(titleRow.createEl('span'), 'cpu');
+            titleRow.createEl('span', { text: profile.name });
+            
+            const canDelete = this.plugin.settings.profiles.length > 1;
+            const delBtn = cardHeader.createEl('button', { cls: 'hyoka-btn-icon', attr: { style: canDelete ? '' : 'opacity:0.2; cursor:not-allowed;' } });
+            setIcon(delBtn, 'trash-2');
+            delBtn.onclick = async () => {
+                if (!canDelete) return;
+                this.plugin.settings.profiles = this.plugin.settings.profiles.filter(p => p.id !== profile.id);
+                if (this.plugin.settings.activeProfileId === profile.id) this.plugin.settings.activeProfileId = this.plugin.settings.profiles[0].id;
+                await this.plugin.saveSettings();
+                this.plugin.refreshChatViews();
+                this.display();
+            };
 
-            new Setting(card).setName('Visual Persona Label').addText(text => text.setValue(profile.name).onChange(async (v) => { profile.name = v; await this.plugin.saveSettings(); }));
-            new Setting(card).setName('Target REST Base Path').addText(text => text.setValue(profile.apiUrl).onChange(async (v) => { profile.apiUrl = v; await this.plugin.saveSettings(); }));
-            new Setting(card).setName('Model Identifier Flag').addText(text => text.setValue(profile.modelName).onChange(async (v) => { profile.modelName = v; await this.plugin.saveSettings(); }));
-            new Setting(card).setName('Authentication Credentials Key').addText(text => text.setPlaceholder('sk-... (Leave empty for local loops)').setValue(profile.apiKey).onChange(async (v) => { profile.apiKey = v; await this.plugin.saveSettings(); }));
-            new Setting(card).setName('System Context Directives').addTextArea(text => text.setValue(profile.systemPrompt).onChange(async (v) => { profile.systemPrompt = v; await this.plugin.saveSettings(); }));
+            new Setting(card).setName('ID').addText(t => t.setValue(profile.name).onChange(async v => { profile.name = v; await this.plugin.saveSettings(); this.plugin.refreshChatViews(); titleRow.querySelector('span:last-child')!.setText(v); }));
+            new Setting(card).setName('URI').addText(t => t.setValue(profile.apiUrl).onChange(async v => { profile.apiUrl = v; await this.plugin.saveSettings(); }));
+            new Setting(card).setName('MODEL').addText(t => t.setValue(profile.modelName).onChange(async v => { profile.modelName = v; await this.plugin.saveSettings(); }));
+            new Setting(card).setName('AUTH').addText(t => t.setValue(profile.apiKey).onChange(async v => { profile.apiKey = v; await this.plugin.saveSettings(); }));
+            new Setting(card).setName('CTX MAX').setDesc('Max context window size in tokens').addText(t => t.setValue(String(profile.maxContextTokens)).onChange(async v => { profile.maxContextTokens = parseInt(v) || 128000; await this.plugin.saveSettings(); const views = this.plugin.app.workspace.getLeavesOfType(VIEW_CHAT); if (views.length) (views[0].view as HyokaChatView).updateContextBar(); }));
+            new Setting(card).setName('SYS_PRMPT').addTextArea(t => { t.inputEl.rows = 4; t.setValue(profile.systemPrompt).onChange(async v => { profile.systemPrompt = v; await this.plugin.saveSettings(); }); });
         });
 
-        const actionWrapper = containerEl.createEl('div', { attr: { style: 'display: flex; justify-content: flex-end; margin-top: 16px;' } });
-        const addBtn = actionWrapper.createEl('button', { text: '+ Deploy Independent Agent Instance', cls: 'mod-cta' });
-        addBtn.addEventListener('click', async () => {
-            const runtimeId = `persona-${Date.now()}`;
-            this.plugin.settings.profiles.push({
-                id: runtimeId, name: 'Auxiliary Worker Drone', apiUrl: 'http://127.0.0.1:8080/v1', modelName: 'google/gemma-4-E2B-it-qat-q4_0-gguf:Q4_0', apiKey: '', systemPrompt: 'You are an explicit micro-task computational node persona instance.', temperature: 0.3
-            });
-            await this.plugin.saveSettings();
-            await this.plugin.initializeAgentWorkspace();
-            this.display();
-        });
+        containerEl.createEl('div', { text: 'NETWORK & I/O', attr: { style: 'font-family: var(--font-monospace); color: var(--text-muted); margin-top: 32px; margin-bottom: 16px;' } });
+        const netCard = containerEl.createEl('div', { cls: 'hyoka-card' });
+        new Setting(netCard).setName('SYS_EXEC BYPASS').setDesc('Execute shell commands directly without UI confirmation.')
+            .addToggle(t => t.setValue(this.plugin.settings.autoApproveCommands).onChange(async v => { this.plugin.settings.autoApproveCommands = v; await this.plugin.saveSettings(); }));
+        new Setting(netCard).setName('NET_SEARCH').setDesc('Permit DuckDuckGo querying.')
+            .addToggle(t => t.setValue(this.plugin.settings.enableWebSearch).onChange(async v => { this.plugin.settings.enableWebSearch = v; await this.plugin.saveSettings(); }));
     }
 }

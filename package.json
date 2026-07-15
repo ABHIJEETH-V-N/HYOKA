@@ -1,6 +1,6 @@
 {
   "name": "hyoka",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Hyoka — Agentic Operating System for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -11,7 +11,8 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "esbuild": "0.19.11",
-    "obsidian": "latest",
-    "typescript": "5.3.3"
+    "obsidian": "^1.13.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.3.3"
   }
 }
